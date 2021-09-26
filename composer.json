@@ -1,0 +1,24 @@
+{
+    "name": "kurzyx/async-amqp-messenger-bundle",
+    "type": "library",
+    "description": "Asynchronous AMQP implementation for Symfony messenger component.",
+    "license": "MIT",
+    "require": {
+        "php": ">=7.4",
+        "kurzyx/async-messenger-bundle": "dev-master",
+        "psr/log": "^1.0|^2.0|^3.0"
+    },
+    "conflict": {
+        "bunny/bunny": "<0.5.0",
+        "php-amqplib/php-amqplib": "<3.0.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kurzyx\\AsyncAmqpMessengerBundle\\": ""
+        },
+        "exclude-from-classmap": [
+            "/Tests/"
+        ]
+    },
+    "minimum-stability": "dev"
+}

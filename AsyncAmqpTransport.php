@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kurzyx\AsyncAmqpMessengerBundle;
 
+use Kurzyx\AsyncAmqpMessengerBundle\Connection\ConnectionInterface;
 use Kurzyx\AsyncMessengerBundle\TerminableAsyncReceiverInterface;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
@@ -23,7 +24,7 @@ final class AsyncAmqpTransport implements TerminableAsyncReceiverInterface, Queu
     private AsyncAmqpSender $sender;
     private SchemaHelper $schemaHelper;
 
-    public function __construct(Connection $connection, Config $config, SerializerInterface $serializer)
+    public function __construct(ConnectionInterface $connection, Config $config, SerializerInterface $serializer)
     {
         $this->config = $config;
         $this->receiver = new AsyncAmqpReceiver($connection, $config, $serializer);

@@ -4,27 +4,24 @@ declare(strict_types=1);
 
 namespace Kurzyx\AsyncAmqpMessengerBundle;
 
-use Bunny\Message;
+use Kurzyx\AsyncAmqpMessengerBundle\Message\MessageInterface;
 use Symfony\Component\Messenger\Stamp\NonSendableStampInterface;
 
 /**
- * Message stamp that contains the original AMQP message and queue name it was consumed from. At last, it contains the
- * channel-id it was consumed through, however this is only useful for the transport.
+ * Message stamp that contains the original AMQP message and queue name it was consumed from.
  */
 final class AmqpReceivedStamp implements NonSendableStampInterface
 {
-    private Message $message;
+    private MessageInterface $message;
     private string $queueName;
-    private int $channelId;
 
-    public function __construct(Message $message, string $queueName, int $channelId)
+    public function __construct(MessageInterface $message, string $queueName)
     {
         $this->message = $message;
         $this->queueName = $queueName;
-        $this->channelId = $channelId;
     }
 
-    public function getMessage(): Message
+    public function getMessage(): MessageInterface
     {
         return $this->message;
     }
@@ -32,13 +29,5 @@ final class AmqpReceivedStamp implements NonSendableStampInterface
     public function getQueueName(): string
     {
         return $this->queueName;
-    }
-
-    /**
-     * @internal
-     */
-    public function getChannelId(): int
-    {
-        return $this->channelId;
     }
 }

@@ -27,7 +27,7 @@ final class RejectRedeliveredMessageMiddleware implements MiddlewareInterface
     {
         /** @var AmqpReceivedStamp|null $amqpReceivedStamp */
         $amqpReceivedStamp = $envelope->last(AmqpReceivedStamp::class);
-        if ($amqpReceivedStamp !== null && $amqpReceivedStamp->getMessage()->redelivered) {
+        if ($amqpReceivedStamp !== null && $amqpReceivedStamp->getMessage()->isRedelivered()) {
             throw new RejectRedeliveredMessageException('Redelivered message from AMQP detected that will be rejected and trigger the retry logic.');
         }
 

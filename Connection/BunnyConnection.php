@@ -2,15 +2,18 @@
 
 declare(strict_types=1);
 
-namespace Kurzyx\AsyncAmqpMessengerBundle;
+namespace Kurzyx\AsyncAmqpMessengerBundle\Connection;
 
 use Bunny\Async\Client as AsyncClient;
-use Bunny\Client as SyncClient;
 use Bunny\Channel;
+use Bunny\Client as SyncClient;
 use Bunny\ClientStateEnum;
 use Bunny\Message;
 use Bunny\Protocol\MethodBasicConsumeOkFrame;
 use DateTime;
+use Kurzyx\AsyncAmqpMessengerBundle\Message\BunnyMessage;
+use Kurzyx\AsyncAmqpMessengerBundle\Message\MessageInterface;
+use LogicException;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use React\EventLoop\LoopInterface as EventLoopInterface;
@@ -20,10 +23,7 @@ use RuntimeException;
 use Symfony\Component\Messenger\Exception\InvalidArgumentException;
 use function React\Promise\resolve;
 
-/**
- * @internal
- */
-final class Connection implements LoggerAwareInterface
+final class BunnyConnection implements ConnectionInterface, LoggerAwareInterface
 {
     use LoggerAwareTrait;
 
@@ -69,6 +69,8 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
+     * TODO: Replace logic by {@see DsnParser}.
+     *
      * Creates a connection by a DSN.
      */
     public static function fromDsn(string $dsn, EventLoopInterface $eventLoop): self
@@ -101,7 +103,7 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Whether a consumer is running (or pending) for the given queue.
+     * @inheritDoc
      */
     public function isConsuming(string $queueName): bool
     {
@@ -114,16 +116,7 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Starts a consumer for a queue.
-     *
-     * Note that only a single consumer can be started for each queue.
-     *
-     * This method works asynchronously.
-     *
-     * @param string                    $queueName
-     * @param callable<Message, string> $onMessage
-     *
-     * @throws RuntimeException When the queue is already being consumed.
+     * @inheritDoc
      */
     public function consume(string $queueName, callable $onMessage): void
     {
@@ -185,13 +178,11 @@ final class Connection implements LoggerAwareInterface
             return;
         }
 
-        $callback($message, $channelId);
+        $callback(new BunnyMessage($message, $channelId));
     }
 
     /**
-     * Cancels all running consumers.
-     *
-     * This method works asynchronously.
+     * @inheritDoc
      */
     public function cancelConsumers(): void
     {
@@ -204,13 +195,16 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Acknowledge a message.
-     *
-     * This method works asynchronously.
+     * @inheritDoc
      */
-    public function ack(int $channelId, Message $message): void
+    public function ack(MessageInterface $message): void
     {
-        $promise = $this->getChannel($channelId)->ack($message);
+        if (! $message instanceof BunnyMessage) {
+            throw new LogicException('Unable to nack message. Message was not consumed by this connection.');
+        }
+
+        $promise = $this->getChannel($message->getChannelId())
+            ->ack($message->getMessage());
 
         if ($promise instanceof ExtendedPromiseInterface) {
             // Throw exceptions when the promise has failed.
@@ -219,13 +213,16 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Not acknowledge (reject) a message.
-     *
-     * This method works asynchronously.
+     * @inheritDoc
      */
-    public function nack(int $channelId, Message $message, bool $requeue = false): void
+    public function nack(MessageInterface $message, bool $requeue = false): void
     {
-        $promise = $this->getChannel($channelId)->nack($message, false, $requeue);
+        if (! $message instanceof BunnyMessage) {
+            throw new LogicException('Unable to nack message. Message was not consumed by this connection.');
+        }
+
+        $promise = $this->getChannel($message->getChannelId())
+            ->nack($message->getMessage(), false, $requeue);
 
         if ($promise instanceof ExtendedPromiseInterface) {
             // Throw exceptions when the promise has failed.
@@ -234,24 +231,33 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Publishes a message.
-     *
-     * This method works synchronously.
+     * @inheritDoc
      */
-    public function publish(string $body, array $headers = [], ?string $exchangeName = null, ?string $routingKey = null): void
+    public function publish(string $body, array $properties = [], ?string $exchangeName = null, ?string $routingKey = null): void
     {
+        // This implementation requires the property names in kebab-case, so transform all properties to this convention.
+        foreach ($properties as $name => $value) {
+            $actualName = str_replace('_', '-', $name);
+            if ($name !== $actualName) {
+                $properties[$actualName] = $value;
+                unset($properties[$name]);
+            }
+        }
+
+        if (isset($properties['timestamp'])) {
+            $properties['timestamp'] = (new DateTime())->setTimestamp($properties['timestamp']);
+        }
+
         $this->getPublishChannel()->publish(
             $body,
-            $this->getAttributes($headers),
+            $properties,
             $exchangeName ?? '',
             $routingKey ?? ''
         );
     }
 
     /**
-     * Calls exchange.declare AMQP method.
-     *
-     * This method works synchronously.
+     * @inheritDoc
      */
     public function exchangeDeclare(
         string $name,
@@ -275,9 +281,7 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Calls exchange.bind AMQP method.
-     *
-     * This method works synchronously.
+     * @inheritDoc
      */
     public function exchangeBind(string $name, string $exchangeName, string $routingKey = '', array $arguments = []): void
     {
@@ -291,9 +295,7 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Calls queue.declare AMQP method.
-     *
-     * This method works synchronously.
+     * @inheritDoc
      */
     public function queueDeclare(
         string $name,
@@ -315,9 +317,7 @@ final class Connection implements LoggerAwareInterface
     }
 
     /**
-     * Calls queue.bind AMQP method.
-     *
-     * This method works synchronously.
+     * @inheritDoc
      */
     public function queueBind(string $name, string $exchangeName, string $routingKey = '', array $arguments = []): void
     {
@@ -328,29 +328,6 @@ final class Connection implements LoggerAwareInterface
             false,
             $arguments
         );
-    }
-
-    private function getAttributes(array $headers): array
-    {
-        // TODO: Improve this..?
-
-        $attributes = [];
-        $attributes['headers'] = array_merge($attributes['headers'] ?? [], $headers);
-
-        if (isset($attributes['delivery_mode'])) {
-            $attributes['delivery-mode'] = $attributes['delivery_mode'];
-            unset($attributes['delivery_mode']);
-        } else {
-            $attributes['delivery-mode'] = 2; // default to 2 (persistent)
-        }
-
-        if (! isset($attributes['timestamp'])) {
-            $attributes['timestamp'] = new DateTime('now');
-        } else if (is_int($attributes['timestamp'])) {
-            $attributes['timestamp'] = (new DateTime())->setTimestamp($attributes['timestamp']);
-        }
-
-        return $attributes;
     }
 
     /**
@@ -439,12 +416,11 @@ final class Connection implements LoggerAwareInterface
 
                 return $channel;
             })
-//            ->then(
-//                fn(Channel $channel) => $channel
-//                    ->qos(0, 0) // TODO: Make configurable...
-//                    ->then(fn() => $channel)
-//            )
-            ;
+            ->then(
+                fn(Channel $channel) => $channel
+                    ->qos(0, 10) // TODO: Make configurable...
+                    ->then(fn() => $channel)
+            );
     }
 
     /**

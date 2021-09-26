@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Kurzyx\AsyncAmqpMessengerBundle;
 
-use Bunny\Message;
 use Closure;
+use Kurzyx\AsyncAmqpMessengerBundle\Connection\ConnectionInterface;
+use Kurzyx\AsyncAmqpMessengerBundle\Message\MessageInterface;
 use Kurzyx\AsyncMessengerBundle\TerminableAsyncReceiverInterface;
 use LogicException;
 use Psr\Log\LoggerAwareInterface;
@@ -19,7 +20,7 @@ final class AsyncAmqpReceiver implements TerminableAsyncReceiverInterface, Queue
 {
     use LoggerAwareTrait;
 
-    private Connection $connection;
+    private ConnectionInterface $connection;
     private Config $config;
     private SerializerInterface $serializer;
     private ?Closure $onEnvelopePendingCallback = null;
@@ -29,7 +30,7 @@ final class AsyncAmqpReceiver implements TerminableAsyncReceiverInterface, Queue
      */
     private array $pendingEnvelopesByQueue = [];
 
-    public function __construct(Connection $connection, Config $config, SerializerInterface $serializer)
+    public function __construct(ConnectionInterface $connection, Config $config, SerializerInterface $serializer)
     {
         $this->connection = $connection;
         $this->config = $config;
@@ -63,10 +64,7 @@ final class AsyncAmqpReceiver implements TerminableAsyncReceiverInterface, Queue
     {
         $receivedStamp = $this->findReceivedStamp($envelope);
 
-        $this->connection->ack(
-            $receivedStamp->getChannelId(),
-            $receivedStamp->getMessage()
-        );
+        $this->connection->ack($receivedStamp->getMessage());
     }
 
     public function reject(Envelope $envelope): void
@@ -74,10 +72,7 @@ final class AsyncAmqpReceiver implements TerminableAsyncReceiverInterface, Queue
         $receivedStamp = $this->findReceivedStamp($envelope);
 
         // Nack and don't requeue.
-        $this->connection->nack(
-            $receivedStamp->getChannelId(),
-            $receivedStamp->getMessage()
-        );
+        $this->connection->nack($receivedStamp->getMessage(), false);
     }
 
     public function terminateAsync(): void
@@ -112,13 +107,13 @@ final class AsyncAmqpReceiver implements TerminableAsyncReceiverInterface, Queue
 
         $this->connection->consume(
             $queueName,
-            fn(Message $message, int $channelId) => $this->onMessage($message, $channelId, $queueName)
+            fn(MessageInterface $message) => $this->onMessage($message, $queueName)
         );
     }
 
-    private function onMessage(Message $message, int $channelId, string $queueName): void
+    private function onMessage(MessageInterface $message, string $queueName): void
     {
-        $this->pendingEnvelopesByQueue[$queueName][] = $this->createEnvelope($message, $channelId, $queueName);
+        $this->pendingEnvelopesByQueue[$queueName][] = $this->createEnvelope($message, $queueName);
 
         if ($this->onEnvelopePendingCallback !== null) {
             ($this->onEnvelopePendingCallback)();
@@ -136,20 +131,20 @@ final class AsyncAmqpReceiver implements TerminableAsyncReceiverInterface, Queue
         return $envelopes[0] ?? null;
     }
 
-    private function createEnvelope(Message $message, int $channelId, string $queueName): Envelope
+    private function createEnvelope(MessageInterface $message, string $queueName): Envelope
     {
         try {
             $envelope = $this->serializer->decode([
-                'body'    => $message->content,
-                'headers' => $message->headers['headers'] ?? [],
+                'body'    => $message->getContent(),
+                'headers' => $message->getHeaders(),
             ]);
         } catch (MessageDecodingFailedException $exception) {
-            $this->connection->nack($channelId, $message);
+            $this->connection->nack($message);
 
             throw $exception;
         }
 
-        return $envelope->with(new AmqpReceivedStamp($message, $queueName, $channelId));
+        return $envelope->with(new AmqpReceivedStamp($message, $queueName));
     }
 
     private function findReceivedStamp(Envelope $envelope): AmqpReceivedStamp

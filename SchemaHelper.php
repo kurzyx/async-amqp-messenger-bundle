@@ -4,16 +4,18 @@ declare(strict_types=1);
 
 namespace Kurzyx\AsyncAmqpMessengerBundle;
 
+use Kurzyx\AsyncAmqpMessengerBundle\Connection\ConnectionInterface;
+
 /**
  * @internal
  */
 final class SchemaHelper
 {
-    private Connection $connection;
+    private ConnectionInterface $connection;
     private Config $config;
     private bool $alreadySetup = false;
 
-    public function __construct(Connection $connection, Config $config)
+    public function __construct(ConnectionInterface $connection, Config $config)
     {
         $this->connection = $connection;
         $this->config = $config;

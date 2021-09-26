@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kurzyx\AsyncAmqpMessengerBundle;
 
+use Kurzyx\AsyncAmqpMessengerBundle\Connection\ConnectionInterface;
 use RuntimeException;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
@@ -13,11 +14,11 @@ use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 final class AsyncAmqpSender implements SenderInterface
 {
-    private Connection $connection;
+    private ConnectionInterface $connection;
     private Config $config;
     private SerializerInterface $serializer;
 
-    public function __construct(Connection $connection, Config $config, SerializerInterface $serializer)
+    public function __construct(ConnectionInterface $connection, Config $config, SerializerInterface $serializer)
     {
         $this->connection = $connection;
         $this->config = $config;
@@ -56,12 +57,34 @@ final class AsyncAmqpSender implements SenderInterface
 
         $this->connection->publish(
             $encodedMessage['body'],
-            $encodedMessage['headers'] ?? [],
+            $this->getMessageProperties($envelope, $encodedMessage['headers'] ?? []),
             $exchangeName,
             $routingKey
         );
 
         return $envelope;
+    }
+
+    private function getMessageProperties(Envelope $envelope, array $headers): array
+    {
+        // TODO: Allow properties to be configurable with an envelope stamp...
+        // TODO: Keep properties when re-sent.
+
+        $properties = [
+            'timestamp'     => time(),
+            'delivery_mode' => 2, // persistent
+        ];
+
+        if (isset($headers['Content-Type'])) {
+            $properties['content_type'] = $headers['Content-Type'];
+            unset($headers['Content-Type']);
+        }
+
+        if (! empty($headers)) {
+            $properties['headers'] = $headers;
+        }
+
+        return $properties;
     }
 
     private function publishRedelivery(Envelope $envelope): Envelope
